@@ -153,7 +153,7 @@ m.get_root().html.add_child(Element(legend_html))
 # ==========================================
 # 6. 輸出成果
 # ==========================================
-output_filename = 'shilin_nail_salon_map.html'
+output_filename = 'index.html'
 m.save(output_filename)
 print(f"🎉 測試通過！地圖已成功生成：{output_filename}")
 print("👉 請在 VS Code 左側檔案總管點擊該檔案，按右鍵選擇『Open with Live Server』，或直接將檔案拖入 Chrome 瀏覽器觀看成果！")
