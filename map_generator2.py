@@ -1,5 +1,6 @@
 import geopandas as gpd
 import folium
+from folium.plugins import Geocoder
 
 # ==========================================
 # 1. 設定檔案路徑 (對應你剛剛解壓縮的資料夾)
@@ -82,66 +83,10 @@ gdf = gdf[gdf['color'] != 'transparent']
 # ==========================================
 # 初始化地圖，中心點設定在士林區周邊
 # 初始化地圖，更換為路名最詳細的 OpenStreetMap
-# 💡 zoom_control=False：移除畫面右上角的 +/- 縮放按鈕
-m = folium.Map(location=[25.0928, 121.5245], zoom_start=15, tiles='OpenStreetMap', zoom_control=False)
+m = folium.Map(location=[25.0928, 121.5245], zoom_start=15, tiles='OpenStreetMap')
 
 # 在地圖上加入「地址搜尋框」外掛
-# 💡 改為手動掛載搜尋控制項，才能自訂中文預留文字，並讓搜尋結果以繁體中文優先呈現
-from folium import Element
-
-# ==========================================
-# 5.1 手機版響應式調整 (電腦版完全不受影響)
-# ==========================================
-# 💡 只在螢幕寬度 <= 600px (手機) 時生效：
-#    1. 分類圖例移到畫面最下方，寬度依螢幕大小
-#    2. 搜尋框維持在最上方，寬度依螢幕大小
-responsive_css = '''
-<style>
-@media (max-width: 600px) {
-    #zoning-legend {
-        top: auto !important;
-        bottom: 10px !important;
-        left: 10px !important;
-        right: 10px !important;
-        width: auto !important;
-        max-width: none !important;
-    }
-
-    .leaflet-control-geocoder {
-        width: calc(100vw - 20px) !important;
-        max-width: none !important;
-    }
-    .leaflet-control-geocoder-form input {
-        width: 100% !important;
-        box-sizing: border-box !important;
-    }
-}
-</style>
-'''
-m.get_root().html.add_child(Element(responsive_css))
-
-geocoder_html = f'''
-<link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
-<script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
-<script>
-window.addEventListener('load', function() {{
-    var map = {m.get_name()};
-    L.Control.geocoder({{
-        position: 'topleft',
-        placeholder: '輸入地址',        // 💡 搜尋欄預設中文提示文字
-        errorMessage: '找不到符合的地址',
-        defaultMarkGeocode: true,
-        geocoder: L.Control.Geocoder.nominatim({{
-            geocodingQueryParams: {{
-                'accept-language': 'zh-TW',  // 💡 搜尋結果優先以繁體中文呈現
-                countrycodes: 'tw'           // 💡 只搜尋台灣境內地址，避免跑出國外同名地點
-            }}
-        }})
-    }}).addTo(map);
-}});
-</script>
-'''
-m.get_root().html.add_child(Element(geocoder_html))
+Geocoder(position='topleft').add_to(m)
 
 print("生成地圖圖層中 (多邊形數量極大，這步驟大約需要 1~2 分鐘，請喝口水)...")
 folium.GeoJson(
@@ -163,11 +108,13 @@ folium.GeoJson(
 # ==========================================
 # 5.5 建立響應式浮動圖例面板 (完美適配手機與電腦)
 # ==========================================
+from folium import Element
+
 legend_html = '''
-<div id="zoning-legend" style="
+<div style="
     position: fixed; 
-    top: 10px;          /* 💡 改放右上角，跟左上角的搜尋框完全分開，不會再互相擠壓 */
-    right: 10px;         
+    top: 70px;          /* 💡 往下移 70px，完美閃避左上角的搜尋框 */
+    left: 10px;         
     max-width: 260px;   /* 💡 限制最大寬度，手機版絕不爆版 */
     width: calc(100% - 20px);
     max-height: 80vh;   /* 💡 限制高度，超出時自動出現內部捲軸 */
@@ -181,51 +128,23 @@ legend_html = '''
     border-radius: 8px; 
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 ">
-    <div id="legend-header" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
-        <h4 style="margin: 0; font-weight: bold; color: #333; font-size: 15px;">💅 台北美甲營登避雷地圖</h4>
-        <span id="legend-toggle-icon" style="font-size: 16px; color: #333; margin-left: 8px; user-select: none;">▾</span>
+    <h4 style="margin-top: 0; margin-bottom: 10px; font-weight: bold; color: #333; font-size: 15px;">💅 台北美甲營登避雷地圖</h4>
+    
+    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+        <span style="background-color: #2ECC71; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
+        <span style="color: #333; line-height: 1.3;"><b>綠色：純商業區</b> (安全牌，直接營登)</span>
     </div>
-
-    <div id="legend-body" style="margin-top: 10px;">
-        <div style="display: flex; align-items: center; margin-bottom: 8px;">
-            <span style="background-color: #2ECC71; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
-            <span style="color: #333; line-height: 1.3;"><b>綠色：純商業區</b> (安全牌，直接營登)</span>
-        </div>
-        
-        <div style="display: flex; align-items: center; margin-bottom: 8px;">
-            <span style="background-color: #F39C12; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
-            <span style="color: #333; line-height: 1.3;"><b>橙色：附條件/住三</b> (需查回饋金或路寬)</span>
-        </div>
-        
-        <div style="display: flex; align-items: center;">
-            <span style="background-color: #95A5A6; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
-            <span style="color: #333; line-height: 1.3;"><b>灰色：純住宅區</b> (大雷區，無法做美業)</span>
-        </div>
+    
+    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+        <span style="background-color: #F39C12; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
+        <span style="color: #333; line-height: 1.3;"><b>橙色：附條件/住三</b> (需查回饋金或路寬)</span>
+    </div>
+    
+    <div style="display: flex; align-items: center;">
+        <span style="background-color: #95A5A6; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
+        <span style="color: #333; line-height: 1.3;"><b>灰色：純住宅區</b> (大雷區，無法做美業)</span>
     </div>
 </div>
-
-<script>
-(function() {
-    // 💡 點擊標題列時收合/展開圖例內容，手機上不用一直擋住地圖
-    document.addEventListener('DOMContentLoaded', function() {
-        var header = document.getElementById('legend-header');
-        var body = document.getElementById('legend-body');
-        var icon = document.getElementById('legend-toggle-icon');
-
-        // 手機（畫面寬度較窄）預設先收合，桌機預設展開
-        if (window.innerWidth < 600) {
-            body.style.display = 'none';
-            icon.textContent = '▸';
-        }
-
-        header.addEventListener('click', function() {
-            var isHidden = body.style.display === 'none';
-            body.style.display = isHidden ? 'block' : 'none';
-            icon.textContent = isHidden ? '▾' : '▸';
-        });
-    });
-})();
-</script>
 '''
 
 # 將寫好的 HTML 圖例掛載到地圖的根節點上
