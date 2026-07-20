@@ -7,7 +7,6 @@ import folium
 file_path = '1150409細部計畫圖/細計-面.shp'
 
 print("讀取圖資中，請稍候 (檔案較大可能需要幾十秒)...")
-# 💡 防呆機制：台灣政府開放資料常混用 utf-8 或 Big5 編碼
 try:
     gdf = gpd.read_file(file_path, encoding='utf-8')
 except Exception as e:
@@ -18,19 +17,16 @@ except Exception as e:
 # 2. 座標系統轉換 (轉換為網頁地圖通用的 WGS84)
 # ==========================================
 print("轉換座標系統中...")
-# 1. 如果圖資沒有定義座標系統，手動幫它宣告為台灣標準 TWD97 (EPSG:3826)
 if gdf.crs is None:
     print("發現未定義座標系統，自動補上 TWD97 (EPSG:3826)...")
     gdf = gdf.set_crs(epsg=3826)
 
-# 2. 接著再安全地轉換為網頁地圖通用的 WGS84 (EPSG:4326)
 if gdf.crs != 'EPSG:4326':
     gdf = gdf.to_crs(epsg=4326)
 
 # ==========================================
 # 3. 自動偵測「土地使用分區」的欄位名稱
 # ==========================================
-# 政府圖資的欄位名稱常有變動，這裡寫一個自動抓取常見欄位名的邏輯
 possible_columns = ['LUSE', 'ZONE', '使用分區', '分區', 'LANDUSE', '分區名稱']
 zoning_column = None
 
@@ -39,7 +35,6 @@ for col in possible_columns:
         zoning_column = col
         break
 
-# 如果找不到預設欄位，會印出所有欄位讓你手動填寫
 if not zoning_column:
     print(f"⚠️ 找不到預設的分區欄位。目前的欄位有：{gdf.columns.tolist()}")
     zoning_column = input("請輸入上面列表中的『分區名稱』欄位名: ")
@@ -51,50 +46,74 @@ else:
 # ==========================================
 def get_color(zoning_name):
     if not isinstance(zoning_name, str):
-        return 'transparent' # 處理空值
+        return 'transparent'
     
-    # 🚫 1. 隱藏區：將道路、河川、公園等公共用地設為透明 (透出底圖)
     exclude_keywords = ['道路', '河川', '行水', '公園', '學校', '機關', '廣場', '綠地', '停車場', '車站', '捷運', '鐵路', '溝渠', '公共設施']
     if any(keyword in zoning_name for keyword in exclude_keywords):
         return 'transparent'
     
-    # 🟢 2. 綠色：純商業區 (無敵區)
     elif any(keyword in zoning_name for keyword in ['第一種商業區', '第二種商業區', '第三種商業區', '第四種商業區']):
         return '#2ECC71'
         
-    # 🟠 3. 橙色：附條件或變種區 (商三特、住三、住四等)
     elif '特' in zoning_name or any(keyword in zoning_name for keyword in ['第三種住宅區', '第四種住宅區']):
         return '#F39C12'
         
-    # ⚪ 4. 灰色：純住宅、工業區、保護區等無法營業的街廓
     else:
         return '#95A5A6'
 
 print("進行法規邏輯判定與填色中...")
 gdf['color'] = gdf[zoning_column].apply(get_color)
-
-# 🚀 神級優化：直接把被標記為 'transparent' 的區塊從資料裡刪掉！
-# 這樣地圖就不會去畫馬路跟河川，除了能切出漂亮街廓，網頁跑起來也會超順！
 gdf = gdf[gdf['color'] != 'transparent']
 
 # ==========================================
 # 5. 渲染 Folium 互動地圖
 # ==========================================
-# 初始化地圖，中心點設定在士林區周邊
-# 初始化地圖，更換為路名最詳細的 OpenStreetMap
-# 💡 zoom_control=False：移除畫面右上角的 +/- 縮放按鈕
 m = folium.Map(location=[25.0928, 121.5245], zoom_start=15, tiles='OpenStreetMap', zoom_control=False)
 
-# 在地圖上加入「地址搜尋框」外掛
-# 💡 改為手動掛載搜尋控制項，才能自訂中文預留文字，並讓搜尋結果以繁體中文優先呈現
 from folium import Element
+
+# ==========================================
+# 5.0 搜尋框樣式統一 (跟圖例框同樣的圓角、陰影、背景，電腦/手機都套用)
+# ==========================================
+geocoder_style_css = '''
+<style>
+.leaflet-control-geocoder {
+    border-radius: 8px !important;
+    border: 1px solid #ccc !important;
+    background-color: rgba(255, 255, 255, 0.95) !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+    /* 💡 不能用 overflow: hidden，否則手機版的搜尋建議清單會被裁切，導致點不到選項 */
+}
+.leaflet-control-geocoder-form {
+    border-radius: 8px !important;
+    overflow: hidden; /* 只讓「輸入框本身」裁圓角，不影響下方彈出的建議清單 */
+}
+.leaflet-control-geocoder-form input {
+    height: 40px !important;
+    padding: 0 12px 0 40px !important;
+    font-size: 16px !important;        /* 💡 手機瀏覽器 (iOS) 對小於16px的輸入框會自動放大畫面，統一設16px避免跑版 */
+    box-sizing: border-box !important;
+    border: none !important;
+}
+.leaflet-control-geocoder-icon {
+    width: 34px !important;
+    height: 40px !important;
+    position: absolute !important;
+    left: 0;
+    top: 0;
+    z-index: 2;
+}
+.leaflet-control-geocoder-results {
+    box-sizing: border-box !important;
+    border-radius: 0 0 8px 8px !important;
+}
+</style>
+'''
+m.get_root().html.add_child(Element(geocoder_style_css))
 
 # ==========================================
 # 5.1 手機版響應式調整 (電腦版完全不受影響)
 # ==========================================
-# 💡 只在螢幕寬度 <= 600px (手機) 時生效：
-#    1. 分類圖例移到畫面最下方，寬度依螢幕大小
-#    2. 搜尋框維持在最上方，寬度依螢幕大小
 responsive_css = '''
 <style>
 @media (max-width: 600px) {
@@ -115,6 +134,10 @@ responsive_css = '''
         width: 100% !important;
         box-sizing: border-box !important;
     }
+    .leaflet-control-geocoder-results {
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
 }
 </style>
 '''
@@ -128,13 +151,14 @@ window.addEventListener('load', function() {{
     var map = {m.get_name()};
     L.Control.geocoder({{
         position: 'topleft',
-        placeholder: '輸入地址',        // 💡 搜尋欄預設中文提示文字
+        collapsed: false,
+        placeholder: '輸入地址',
         errorMessage: '找不到符合的地址',
         defaultMarkGeocode: true,
         geocoder: L.Control.Geocoder.nominatim({{
             geocodingQueryParams: {{
-                'accept-language': 'zh-TW',  // 💡 搜尋結果優先以繁體中文呈現
-                countrycodes: 'tw'           // 💡 只搜尋台灣境內地址，避免跑出國外同名地點
+                'accept-language': 'zh-TW',
+                countrycodes: 'tw'
             }}
         }})
     }}).addTo(map);
@@ -148,11 +172,10 @@ folium.GeoJson(
     gdf,
     style_function=lambda feature: {
         'fillColor': feature['properties']['color'],
-        'color': '#333333',     # 邊界線顏色 (深灰)
-        'weight': 0.3,          # 邊界線粗細
-        'fillOpacity': 0.4      # 區塊透明度
+        'color': '#333333',
+        'weight': 0.3,
+        'fillOpacity': 0.4
     },
-    # 設定滑鼠移過去時，顯示該地塊的分區名稱
     tooltip=folium.GeoJsonTooltip(
         fields=[zoning_column], 
         aliases=['法定土地分區:'],
@@ -166,11 +189,11 @@ folium.GeoJson(
 legend_html = '''
 <div id="zoning-legend" style="
     position: fixed; 
-    top: 10px;          /* 💡 改放右上角，跟左上角的搜尋框完全分開，不會再互相擠壓 */
+    top: 10px;
     right: 10px;         
-    max-width: 260px;   /* 💡 限制最大寬度，手機版絕不爆版 */
+    max-width: 260px;
     width: calc(100% - 20px);
-    max-height: 80vh;   /* 💡 限制高度，超出時自動出現內部捲軸 */
+    max-height: 80vh;
     overflow-y: auto;   
     background-color: rgba(255, 255, 255, 0.95); 
     border: 1px solid #ccc; 
@@ -206,13 +229,11 @@ legend_html = '''
 
 <script>
 (function() {
-    // 💡 點擊標題列時收合/展開圖例內容，手機上不用一直擋住地圖
     document.addEventListener('DOMContentLoaded', function() {
         var header = document.getElementById('legend-header');
         var body = document.getElementById('legend-body');
         var icon = document.getElementById('legend-toggle-icon');
 
-        // 手機（畫面寬度較窄）預設先收合，桌機預設展開
         if (window.innerWidth < 600) {
             body.style.display = 'none';
             icon.textContent = '▸';
@@ -228,7 +249,6 @@ legend_html = '''
 </script>
 '''
 
-# 將寫好的 HTML 圖例掛載到地圖的根節點上
 m.get_root().html.add_child(Element(legend_html))
 
 # ==========================================
