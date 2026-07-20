@@ -1,6 +1,5 @@
 import geopandas as gpd
 import folium
-from folium import Element
 
 # ==========================================
 # 1. 設定檔案路徑 (對應你剛剛解壓縮的資料夾)
@@ -45,38 +44,20 @@ else:
 # ==========================================
 # 4. 定義美甲店營登的 QA 判定邏輯 (核心業務邏輯)
 # ==========================================
-#
-# ⚠️ 重要提醒：
-# 「住宅轉商業、要看有沒有繳回饋金」這種資訊，通常不會出現在都市計畫
-# 分區圖 (shapefile) 的屬性欄位裡 —— 因為那是「個案/建物層級」的行政
-# 審查結果，而不是分區本身的屬性。這份圖資頂多只能告訴你「這塊地屬於
-# 附條件允許商業使用的分區類型」（例如住三之一、住四之一），但實際上
-# 「有沒有繳回饋金」需要另外查建管處的資料，程式無法從這份 shp 自動判斷。
-#
-# 下面先用「分區名稱含『之一』」這種常見寫法作為預設猜測，把這類分區
-# 獨立標成紫色。請你打開屬性表確認實際的分區名稱字串長怎樣，
-# 再回來調整 fee_condition_keywords 這份清單，才會準確。
-
-fee_condition_keywords = ['之一']  # <-- 請依實際屬性表內容修改這裡
-
 def get_color(zoning_name):
     if not isinstance(zoning_name, str):
         return 'transparent'
-
+    
     exclude_keywords = ['道路', '河川', '行水', '公園', '學校', '機關', '廣場', '綠地', '停車場', '車站', '捷運', '鐵路', '溝渠', '公共設施']
     if any(keyword in zoning_name for keyword in exclude_keywords):
         return 'transparent'
-
-    # 紫色：附條件商業使用（住轉商，需視有無繳交回饋金而定，屬個案狀況）
-    elif any(keyword in zoning_name for keyword in fee_condition_keywords):
-        return '#8E44AD'
-
+    
     elif any(keyword in zoning_name for keyword in ['第一種商業區', '第二種商業區', '第三種商業區', '第四種商業區']):
         return '#2ECC71'
-
+        
     elif '特' in zoning_name or any(keyword in zoning_name for keyword in ['第三種住宅區', '第四種住宅區']):
         return '#F39C12'
-
+        
     else:
         return '#95A5A6'
 
@@ -89,8 +70,10 @@ gdf = gdf[gdf['color'] != 'transparent']
 # ==========================================
 m = folium.Map(location=[25.0928, 121.5245], zoom_start=15, tiles='OpenStreetMap', zoom_control=False)
 
+from folium import Element
+
 # ==========================================
-# 5.0 搜尋框樣式統一 + 修正手機版輸入框顯示問題
+# 5.0 搜尋框樣式統一 (跟圖例框同樣的圓角、陰影、背景，電腦/手機都套用)
 # ==========================================
 geocoder_style_css = '''
 <style>
@@ -99,27 +82,18 @@ geocoder_style_css = '''
     border: 1px solid #ccc !important;
     background-color: rgba(255, 255, 255, 0.95) !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
-    box-sizing: border-box !important;
-    /* 不能用 overflow: hidden，否則手機版的搜尋建議清單會被裁切，導致點不到選項 */
+    /* 💡 不能用 overflow: hidden，否則手機版的搜尋建議清單會被裁切，導致點不到選項 */
 }
 .leaflet-control-geocoder-form {
     border-radius: 8px !important;
     overflow: hidden; /* 只讓「輸入框本身」裁圓角，不影響下方彈出的建議清單 */
-    box-sizing: border-box !important;
-    width: 100% !important;
 }
 .leaflet-control-geocoder-form input {
     height: 40px !important;
     padding: 0 12px 0 40px !important;
-    font-size: 16px !important;        /* 手機瀏覽器 (iOS) 對小於16px的輸入框會自動放大畫面，統一設16px避免跑版 */
+    font-size: 16px !important;        /* 💡 手機瀏覽器 (iOS) 對小於16px的輸入框會自動放大畫面，統一設16px避免跑版 */
     box-sizing: border-box !important;
     border: none !important;
-    /* 關鍵修正：套件本身會塞 inline width，這裡用 !important 強制蓋掉，
-       避免手機上輸入框實際可視寬度比容器小，導致打字打到一半字被裁掉看不見 */
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: none !important;
-    display: block !important;
 }
 .leaflet-control-geocoder-icon {
     width: 34px !important;
@@ -169,92 +143,25 @@ responsive_css = '''
 '''
 m.get_root().html.add_child(Element(responsive_css))
 
-# ==========================================
-# 5.2 搜尋框功能：解決「打完要按X才能搜下一個」「空白鍵鏡頭亂跑」「反覆搜尋速度」
-# ==========================================
 geocoder_html = f'''
 <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
 <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
 <script>
 window.addEventListener('load', function() {{
     var map = {m.get_name()};
-    var searchMarker = null;
-
-    var geocoderControl = L.Control.geocoder({{
+    L.Control.geocoder({{
         position: 'topleft',
         collapsed: false,
         placeholder: '輸入地址',
         errorMessage: '找不到符合的地址',
-        defaultMarkGeocode: false,   // 關掉預設行為，改成下面自己接管，才能做到「搜完馬上可以搜下一個」
-        suggestMinLength: 3,         // 至少打 3 個字才開始查，減少無效請求
-        suggestTimeout: 400,         // 拉長打字間隔的等待時間 (debounce)，減少對 Nominatim 的呼叫次數
+        defaultMarkGeocode: true,
         geocoder: L.Control.Geocoder.nominatim({{
             geocodingQueryParams: {{
                 'accept-language': 'zh-TW',
-                countrycodes: 'tw',
-                limit: 5   // 減少回傳筆數，加快回應
+                countrycodes: 'tw'
             }}
         }})
     }}).addTo(map);
-
-    // 選到搜尋結果後：自己畫標記、飛過去、然後清空輸入框讓使用者可以直接搜下一個
-    geocoderControl.on('markgeocode', function(e) {{
-        var center = e.geocode.center;
-
-        if (searchMarker) {{
-            map.removeLayer(searchMarker);
-        }}
-        searchMarker = L.marker(center).addTo(map).bindPopup(e.geocode.name).openPopup();
-        map.setView(center, 17);
-
-        setTimeout(function() {{
-            var input = document.querySelector('.leaflet-control-geocoder-form input');
-            if (input) {{
-                input.value = '';
-                input.focus();
-            }}
-            var resultsList = document.querySelector('.leaflet-control-geocoder-results');
-            if (resultsList) {{
-                resultsList.innerHTML = '';
-            }}
-        }}, 50);
-    }});
-
-    // 修正：在搜尋框內按空白鍵/方向鍵時，不要把事件傳給地圖 (地圖會把空白鍵當成快捷鍵導致鏡頭跑走)
-    setTimeout(function() {{
-        var input = document.querySelector('.leaflet-control-geocoder-form input');
-        if (input) {{
-            L.DomEvent.on(input, 'keydown', L.DomEvent.stopPropagation);
-            L.DomEvent.on(input, 'keypress', L.DomEvent.stopPropagation);
-            L.DomEvent.on(input, 'keyup', L.DomEvent.stopPropagation);
-        }}
-        var geocoderContainer = document.querySelector('.leaflet-control-geocoder');
-        if (geocoderContainer) {{
-            L.DomEvent.disableClickPropagation(geocoderContainer);
-            L.DomEvent.disableScrollPropagation(geocoderContainer);
-        }}
-    }}, 300);
-
-    // 新功能：點擊底圖任一處，反查該座標的詳細地址並用 popup 顯示
-    map.on('click', function(e) {{
-        var lat = e.latlng.lat;
-        var lng = e.latlng.lng;
-
-        var loadingPopup = L.popup()
-            .setLatLng(e.latlng)
-            .setContent('查詢地址中...')
-            .openOn(map);
-
-        fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lng + '&accept-language=zh-TW')
-            .then(function(res) {{ return res.json(); }})
-            .then(function(data) {{
-                var addr = data && data.display_name ? data.display_name : '查無地址資料';
-                loadingPopup.setContent(addr);
-            }})
-            .catch(function() {{
-                loadingPopup.setContent('地址查詢失敗，請稍後再試');
-            }});
-    }});
 }});
 </script>
 '''
@@ -270,7 +177,7 @@ folium.GeoJson(
         'fillOpacity': 0.4
     },
     tooltip=folium.GeoJsonTooltip(
-        fields=[zoning_column],
+        fields=[zoning_column], 
         aliases=['法定土地分區:'],
         style=("background-color: white; color: #333333; font-family: arial; font-size: 14px; padding: 10px; border-radius: 5px;")
     )
@@ -281,20 +188,20 @@ folium.GeoJson(
 # ==========================================
 legend_html = '''
 <div id="zoning-legend" style="
-    position: fixed;
+    position: fixed; 
     top: 10px;
-    right: 10px;
+    right: 10px;         
     max-width: 260px;
     width: calc(100% - 20px);
     max-height: 80vh;
-    overflow-y: auto;
-    background-color: rgba(255, 255, 255, 0.95);
-    border: 1px solid #ccc;
-    z-index: 9999;
+    overflow-y: auto;   
+    background-color: rgba(255, 255, 255, 0.95); 
+    border: 1px solid #ccc; 
+    z-index: 9999; 
     font-size: 14px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    padding: 12px;
-    border-radius: 8px;
+    padding: 12px; 
+    border-radius: 8px; 
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 ">
     <div id="legend-header" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
@@ -307,17 +214,12 @@ legend_html = '''
             <span style="background-color: #2ECC71; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
             <span style="color: #333; line-height: 1.3;"><b>綠色：純商業區</b> (安全牌，直接營登)</span>
         </div>
-
-        <div style="display: flex; align-items: center; margin-bottom: 8px;">
-            <span style="background-color: #8E44AD; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
-            <span style="color: #333; line-height: 1.3;"><b>紫色：住轉商(需回饋金)</b> (要查該建物是否已繳交回饋金，屬個案狀況)</span>
-        </div>
-
+        
         <div style="display: flex; align-items: center; margin-bottom: 8px;">
             <span style="background-color: #F39C12; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
             <span style="color: #333; line-height: 1.3;"><b>橙色：附條件/住三</b> (需查回饋金或路寬)</span>
         </div>
-
+        
         <div style="display: flex; align-items: center;">
             <span style="background-color: #95A5A6; min-width: 16px; height: 16px; display: inline-block; margin-right: 8px; border-radius: 3px; border: 1px solid #bbb;"></span>
             <span style="color: #333; line-height: 1.3;"><b>灰色：純住宅區</b> (大雷區，無法做美業)</span>
